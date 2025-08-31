@@ -1,0 +1,212 @@
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import RedirectResponse
+from typing import Optional, List
+from src.configs.constants import RedisKeys
+from src.lib.session import SessionDataService as session
+from src.lib.db import db_session
+from src.utils.common import parse_date_string, safe_int
+from datetime import datetime
+
+class FinancialStatementController:
+    @staticmethod
+    def get_partner_recent_by_event_date(contact_id: int, company_id: int, mailing_type_id: int, excludeSCFFunds: bool, event_date: datetime, strict_date: bool):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+            "ExcludeSCFFunds": excludeSCFFunds,
+        }
+        
+        if event_date:
+            params["EventDate"] = event_date
+            params["StrictDate"] = strict_date
+            
+        return db_session.call_procedure("pr_PartnerMailingRecentByEventDate", params)
+    
+    @staticmethod
+    def get_recent_partner_mailing_by_event_date_with_fallback(contact_id: int, company_id: int, mailing_type_id: int, excludeSCFFunds: bool, event_date: datetime, strict_date: bool, objMenuRS: List[object]):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+            "ExcludeSCFFunds": excludeSCFFunds,
+        }
+        
+        if event_date:
+            params["EventDate"] = event_date
+            params["StrictDate"] = strict_date
+        elif len(objMenuRS):
+            raw_event_date = objMenuRS[0].get("EventDate", None)
+            params["StrictDate"] = True
+            params["EventDate"] = raw_event_date
+            
+        return db_session.call_procedure("pr_PartnerMailingRecentByEventDate", params)
+    
+    @staticmethod
+    def get_partner_mailing_quaterly_by_event_date_and_multiple_mailing_types(contact_id: int, company_id: int, mailing_type_id_1: int, mailing_type_id_2: int, event_date: str):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID1": mailing_type_id_1,
+            "MailingTypeID2": mailing_type_id_2,
+            "EventDate": event_date,
+        }
+        
+        return db_session.call_procedure("pr_PartnerMailingQuartersByEventDateAndMultipleMailingTypes", params)
+    
+    @staticmethod
+    def get_partner_mailing_years_by_event_date_and_multiple_mailing_types(contact_id: int, company_id: int, mailing_type_id_1: int, mailing_type_id_2: int, event_date: str):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID1": mailing_type_id_1,
+            "MailingTypeID2": mailing_type_id_2,
+            "EventDate": event_date,
+        }
+        
+        return db_session.call_procedure("pr_PartnerMailingYearsByEventDateAndMultipleMailingTypes", params)
+    
+    @staticmethod
+    def get_partner_FStmt_summary(contact_id: int, company_id: int, event_date: str):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "EventDate": event_date,
+        }
+        
+        return db_session.call_procedure("pr_PartnerFStmtSummary", params)
+    
+    @staticmethod
+    def get_partner_FStmt_summary_grand_totals(contact_id: int, company_id: int):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+        }
+        
+        return db_session.call_procedure("pr_PartnerFStmtSummaryGrandTotals", params)
+    
+    @staticmethod
+    def get_lp_info(contact_id: int, company_id: int):
+        params = {
+            "CompanyID": company_id,
+            "ContactID": contact_id,
+        }
+        
+        return db_session.call_procedure("pr_PartnerMySequoiaLPInfo", params)
+    
+    @staticmethod
+    def get_company_name(company_id: int):
+        params = {
+            "CompanyID": company_id,
+        }
+        
+        return db_session.call_procedure("pr_AdminCompanyName", params)
+    
+    @staticmethod
+    def get_partner_mailing_info(contact_id: int, company_id: int, mailing_id: int):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingID": mailing_id,
+        }
+        
+        return db_session.call_procedure("pr_PartnerMailingInfo", params)
+    
+    @staticmethod
+    def get_partner_most_recent_mailing(contact_id: int, company_id: int, mailing_type_id: int):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+        }
+        
+        return db_session.call_procedure("pr_PartnerMostRecentMailing", params)
+    
+    @staticmethod
+    async def prepare_financial_statement_view_model(request: Request, mid: str, date: str):
+        mailing_id, selected_date = safe_int(mid), parse_date_string(date)
+
+        curr_user_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_ID
+        )
+        curr_user_id = safe_int(curr_user_id, 0)
+        curr_user_lp_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_LP_ID
+        )
+        curr_user_lp_id = safe_int(curr_user_lp_id, 0)
+        
+        if not curr_user_id or not curr_user_lp_id:
+            return None
+        
+        objMenuRS = FinancialStatementController.get_partner_recent_by_event_date(curr_user_id, curr_user_lp_id, 1, True, selected_date, bool(selected_date))
+        
+        event_date = None
+        if len(objMenuRS):
+            event_date = objMenuRS[0].get("EventDate", None)
+            mailing_id = mailing_id if mailing_id else objMenuRS[0].get("MailingID", None)
+            
+        objMenuMCRS = FinancialStatementController.get_recent_partner_mailing_by_event_date_with_fallback(curr_user_id, curr_user_lp_id, 20, True, selected_date, bool(selected_date), objMenuRS)
+        
+        if len(objMenuMCRS):
+            if not event_date:
+                event_date = objMenuMCRS[0].get("EventDate", None)
+            if not mailing_id:
+                mailing_id = safe_int(objMenuMCRS[0].get("MailingID", None))
+        
+        objMenuFStmtQuartersRS, objMenuYearsRS = None, None
+        
+        if len(objMenuRS) > 0 or len(objMenuMCRS) > 0:
+            objMenuFStmtQuartersRS = FinancialStatementController.get_partner_mailing_quaterly_by_event_date_and_multiple_mailing_types(curr_user_id, curr_user_lp_id, 1, 20, event_date)
+            
+            objMenuYearsRS = FinancialStatementController.get_partner_mailing_years_by_event_date_and_multiple_mailing_types(curr_user_id, curr_user_lp_id, 1, 20, event_date)
+            
+            if "/financial_statement" in request.base_url.path and not mailing_id:
+                if len(objMenuRS) > 0:
+                    mailing_id = safe_int(objMenuRS[0].get("MailingID", None))
+                    
+                if len(objMenuMCRS) > 0 and not mailing_id:
+                    mailing_id = safe_int(objMenuMCRS[0].get("MailingID", None))
+        
+        objSummaryFStmtRS = FinancialStatementController.get_partner_FStmt_summary(curr_user_id, curr_user_lp_id, selected_date)
+            
+        objSummaryTotalsRS = FinancialStatementController.get_partner_FStmt_summary_grand_totals(curr_user_id, curr_user_lp_id)
+        
+        objLPInfoRS = FinancialStatementController.get_lp_info(curr_user_id, curr_user_lp_id)
+        objCompanyNameRS = FinancialStatementController.get_company_name(curr_user_lp_id)
+        objPartnerMailingInfo = FinancialStatementController.get_partner_mailing_info(curr_user_id, curr_user_lp_id, mailing_id)
+        objPartnerMostRecentMailing = FinancialStatementController.get_partner_most_recent_mailing(curr_user_id, curr_user_lp_id, 1)
+        
+        return {
+            "MailingID": mailing_id,
+            "EventDate": selected_date,
+            "MenuRS": objMenuRS,
+            "MenuMCRS": objMenuMCRS,
+            "MenuFStmtQuartersRS": objMenuFStmtQuartersRS,
+            "MenuYearsRS": objMenuYearsRS,
+            "SummaryFStmtRS": objSummaryFStmtRS,
+            "SummaryTotalsRS": objSummaryTotalsRS,
+            "LPInfoRS": objLPInfoRS,
+            "objCompanyNameRS": objCompanyNameRS,
+            "PartnerMailingInfoRS": objPartnerMailingInfo,
+            "PartnerMostRecentMailing": objPartnerMostRecentMailing,
+
+            "ShowFStmt": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_FSTMT) or False,
+            "ShowFStmtMC": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_FSTMTMC) or False,
+            "ShowSAnnual": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_SANNUAL) or False,
+            "ShowAudFS": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_AUD_FS) or False,
+        }
+        
+
+    @staticmethod
+    async def get_quaterly_report(request: Request, mid: Optional[str] = None, date: Optional[str] = None
+    ):
+        view_model = await (
+            FinancialStatementController.prepare_financial_statement_view_model(
+                request, mid, date
+            )
+        )
+
+        if not view_model:
+            return RedirectResponse(url="/")
+
+        return {"data": view_model}

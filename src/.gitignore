@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# Alembic cache
+src/alembic/versions/__pycache__/
+
+# PyCharm
+.idea/
+
+# Environment variables
+.env
+
+src/configs/env.py
