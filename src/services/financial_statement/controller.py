@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from typing import Optional, List
 from src.configs.constants import RedisKeys
@@ -398,3 +398,79 @@ class FinancialStatementController:
             "menuViewModel": menuViewModel,
             "summaryViewModel": summaryViewModel,
         }
+        
+    @staticmethod
+    def get_partner_mailing_recent_by_event_date_audited_fstmt(contact_id: int, company_id: int, mailing_type_id: int, event_date: datetime):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+        }
+        
+        if event_date:
+            params["EventDate"] = event_date
+            
+        return db_session.call_procedure("pr_PartnerMailingRecentByEventDate", params)
+        
+    @staticmethod
+    async def prepare_audited_financial_statement_view_model(request: Request, mid: Optional[str] = None, date: Optional[str] = None):
+        mailing_id = safe_int(mid)
+        selected_date = parse_date_string(date)
+        
+        curr_user_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_ID
+        )
+        curr_user_id = safe_int(curr_user_id, 0)
+        curr_user_lp_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_LP_ID
+        )
+        curr_user_lp_id = safe_int(curr_user_lp_id, 0)
+        
+        if not curr_user_id or not curr_user_lp_id:
+            raise HTTPException(
+            status_code=401,
+            detail="Unauthorised User",
+        )
+        
+        objMenuRS = FinancialStatementController.get_partner_mailing_recent_by_event_date_audited_fstmt(curr_user_id, curr_user_lp_id, 9, selected_date)
+        
+        objMenuYearsRS = None
+        # ! Not sure why this block exists
+        # DataTable objMenuYearsRS = null;
+        # if (objMenuRS.Rows.Count > 0)
+        # {
+        #     var eventDate =
+        #         objMenuRS.Rows[0]["EventDate"] != DBNull.Value
+        #             ? (DateTime?)objMenuRS.Rows[0]["EventDate"]
+        #             : DateTime.Now;
+        #     objMenuYearsRS = financialStatementsService.GetPartnerMailingYearsByEventDate(
+        #         int.Parse(userId),
+        #         int.Parse(userLpid),
+        #         9, // MailingTypeID
+        #         eventDate.GetValueOrDefault(DateTime.Now)
+        #     );
+        # }
+        
+        objLPInfoRS = FinancialStatementController.get_lp_info(curr_user_id, curr_user_lp_id)
+        
+        return {
+            "MailingId": mailing_id,
+            "MenuRS": objMenuRS,
+            "MenuYearsRS": objMenuYearsRS,
+            "LPInfoRS": objLPInfoRS,
+            "SelectedDate": selected_date,
+            "ShowFStmt": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_FSTMT) or False,
+            "ShowFStmtMC": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_FSTMTMC) or False,
+            "ShowSAnnual": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_SANNUAL) or False,
+            "ShowAudFS": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_AUD_FS) or False,
+        }
+        
+
+    @staticmethod
+    async def get_annual_report(request: Request, mid: Optional[str] = None, date: Optional[str] = None):
+        viewModel = await FinancialStatementController.prepare_audited_financial_statement_view_model(request, mid, date)
+        
+        if not viewModel:
+            return RedirectResponse(url='/dashboard')
+        
+        return viewModel
