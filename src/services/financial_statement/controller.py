@@ -210,3 +210,191 @@ class FinancialStatementController:
             return RedirectResponse(url="/")
 
         return {"data": view_model}
+    
+    @staticmethod
+    def get_partner_mailing_recent_by_event_date_with_files(contact_id: int, company_id: int, mailing_type_id: int, eventDate: datetime):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+        }
+        
+        if eventDate:
+            params["EventDate"] = eventDate
+            
+        return db_session.call_procedure("pr_PartnerMailingRecentByEventDateWithFiles", params)
+    
+    @staticmethod
+    def get_partner_mailing_recent_semi_annual_geo_with_files(contact_id: int, company_id: int, eventDate: datetime):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+        }
+        
+        if eventDate:
+            params["EventDate"] = eventDate
+            
+        return db_session.call_procedure("pr_PartnerMailingRecentSAnnualGeoWithFiles", params)
+    
+    @staticmethod
+    def get_partner_mailing_quaters_by_event_date(contact_id: int, company_id: int, mailing_type_id: int, eventDate: datetime):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+            "EventDate": eventDate
+        }
+            
+        return db_session.call_procedure("pr_PartnerMailingQuartersByEventDate", params)
+    
+    @staticmethod
+    def get_partner_mailing_years_by_event_date(contact_id: int, company_id: int, mailing_type_id: int, eventDate: datetime):
+        params = {
+            "ContactID": contact_id,
+            "CompanyID": company_id,
+            "MailingTypeID": mailing_type_id,
+            "EventDate": eventDate
+        }
+            
+        return db_session.call_procedure("pr_PartnerMailingYearsByEventDate", params)
+    
+    @staticmethod
+    async def prepare_menu_semi_annuak_view_model(request: Request, mid: Optional[str] = None, date: Optional[str] = None):
+        curr_user_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_ID
+        )
+        curr_user_id = safe_int(curr_user_id, 0)
+        curr_user_lp_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_LP_ID
+        )
+        curr_user_lp_id = safe_int(curr_user_lp_id, 0)
+        
+        mailing = ""
+        if mid:
+            mailing = mid
+            
+        objMenuRS = FinancialStatementController.get_partner_mailing_recent_by_event_date_with_files(curr_user_id, curr_user_lp_id, 8, parse_date_string(date))
+        
+        objMenuGeoRS = FinancialStatementController.get_partner_mailing_recent_semi_annual_geo_with_files(curr_user_id, curr_user_lp_id, parse_date_string(date))
+        
+        date_event, showSA = None, False
+        if len(objMenuRS) > 0:
+            date_event = parse_date_string(objMenuRS[0].get("EventDate"))
+            mailing = objMenuRS[0].get("MailingID")
+            showSA = True
+            
+            if len(objMenuGeoRS) > 0:
+                if parse_date_string(objMenuGeoRS[0].get("EventDate")) > parse_date_string(objMenuRS[0].get("EventDate")):
+                    date_event = parse_date_string(objMenuGeoRS[0].get("EventDate"))
+                    showSA = False
+                    mailing = objMenuGeoRS[0].get("MailingID")
+            else:
+                if len(objMenuGeoRS) > 0:
+                    date_event = parse_date_string(objMenuGeoRS[0].get("EventDate"))
+                    mailing = objMenuGeoRS[0].get("MailingID")
+                    
+        objLPInfoRS = FinancialStatementController.get_lp_info(curr_user_id, curr_user_lp_id)
+        showMenuTimeframe = False
+        
+        if not date_event and not bool(objLPInfoRS.Rows[0]["IsRestrictedAccess"]):
+            showMenuTimeframe = True
+        
+        objMenuQuartersRS, objMenuYearsRS = None, None
+        if showMenuTimeframe:
+            objMenuQuartersRS = FinancialStatementController.get_partner_mailing_quaters_by_event_date(curr_user_id, curr_user_lp_id, 8, date_event)
+            objMenuYearsRS = FinancialStatementController.get_partner_mailing_years_by_event_date(
+                curr_user_id, curr_user_lp_id, 8, date_event
+            )
+            
+        return {
+            "MenuRS": objMenuRS,
+            "ShowSA": showSA,
+            "DateEvent": date_event,
+            "intMailing": mailing,
+            "ShowMenuTimeframe": showMenuTimeframe,
+            "MenuQuartersRS": objMenuQuartersRS,
+            "MenuYearsRS": objMenuYearsRS,
+            "ShowFStmt": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_FSTMT) or False,
+            "ShowFStmtMC": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_FSTMTMC) or False,
+            "ShowSAnnual": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_SANNUAL) or False,
+            "ShowAudFS": await session.get_session_data(request, RedisKeys.MY_SC_VIEW_AUD_FS) or False,
+        }
+        
+    @staticmethod
+    def get_mailing_subject(mailing_id:int, company_id: int):
+        query = """
+            SELECT M.Subject
+            FROM Mailing M
+            WHERE M.MailingID = @MailingID
+            AND NOT EXISTS (
+                SELECT *
+                FROM MailingExceptionExclude
+                WHERE LP_CompanyID = @CompanyID
+                AND FundID = M.FundID
+                AND MailingTypeID = M.MailingTypeID
+        """
+        params = {
+            "MailingID": mailing_id,
+            "CompanyID": company_id,
+        }
+        
+        
+        return db_session.execute_query(query, params)
+        
+    
+    @staticmethod
+    async def prepare_summary_semi_annual_view_model(request: Request, mid: Optional[str] = None, date: Optional[str] = None, menuViewModel: Optional = None):
+        curr_user_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_ID
+        )
+        curr_user_id = safe_int(curr_user_id, 0)
+        curr_user_lp_id = await session.get_session_data(
+            request, RedisKeys.CURRENT_USER_LP_ID
+        )
+        curr_user_lp_id = safe_int(curr_user_lp_id, 0)
+        
+        objLPInfoRS = FinancialStatementController.get_lp_info(curr_user_id, curr_user_lp_id)
+        mailing_RA = None
+        mailing = None
+        
+        if len(objLPInfoRS) > 0 and bool(objLPInfoRS[0]["IsRestrictedAccess"]):
+            mailing_RA = {
+                "objSAGeoRARS": FinancialStatementController.get_partner_mailing_recent_semi_annual_geo_with_files(curr_user_id, curr_user_lp_id, null)
+            }
+        else:
+            mailing = None
+            if mid:
+                mailing = mid
+                
+            objRS = FinancialStatementController.get_partner_mailing_info(curr_user_id, curr_user_lp_id, safe_int(mailing))
+            
+            if len(objRS) > 0:
+                objRS = FinancialStatementController.get_mailing_subject(safe_int(mailing), curr_user_lp_id)
+            
+            objSAGeoRS = None
+            if not mid:
+                objSAGeoRS = FinancialStatementController.get_partner_mailing_recent_semi_annual_geo_with_files(curr_user_id, curr_user_lp_id, menuViewModel.get("DateEvent"))
+                
+            mailing = {
+                "objRS":objRS,
+                "DateEvent":menuViewModel.get("DateEvent"),
+                "MenuRS":menuViewModel.get("MenuRS"),
+                "objSAGeoRS":objSAGeoRS,
+                "ShowSA":menuViewModel.get("ShowSA"),
+                "intMailing":mailing,
+            }
+            
+        return {
+            "LPInfoRS": objLPInfoRS,
+            "mailing_RA": mailing_RA,
+            "mailing": mailing
+        }
+    
+    @staticmethod
+    async def get_semi_annual_reports(request: Request, mid: Optional[str] = None, date: Optional[str] = None):
+        menuViewModel = await FinancialStatementController.prepare_menu_semi_annuak_view_model(request, mid, date)
+        summaryViewModel = await FinancialStatementController.prepare_summary_semi_annual_view_model(request, mid, date, menuViewModel)
+        return {
+            "menuViewModel": menuViewModel,
+            "summaryViewModel": summaryViewModel,
+        }

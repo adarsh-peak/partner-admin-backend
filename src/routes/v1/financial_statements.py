@@ -10,4 +10,13 @@ router = APIRouter()
 async def index(request: Request, mid: Optional[str] = None, date: Optional[str] = None, _ = Depends(AuthorisationService.authorize_user)):
     return await FinancialStatementController.get_quaterly_report(request, mid, date)
 
+@router.get("/semiannual-reports")
+async def semiannual_report(request: Request, mid: Optional[str] = None, date: Optional[str] = None, _ = Depends(AuthorisationService.authorize_user)):
+    return await FinancialStatementController.get_semi_annual_reports(request, mid, date)
+
+@router.get("/annual-reports")
+async def annual_report(request: Request, mid: Optional[str] = None, date: Optional[str] = None, _ = Depends(AuthorisationService.authorize_user)):
+    return await FinancialStatementController.get_quaterly_report(request, mid, date)
+
+
 
